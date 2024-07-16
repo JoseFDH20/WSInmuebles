@@ -1,0 +1,97 @@
+# Define a 'Persistent Voulume Claim'(PVC) for PostgreSQL Storage, dynamically provisioned by cluster
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: postgres-db-volume
+  labels:
+    type: local
+    app: postgres
+spec:
+#  storageClassName: manual
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/mnt/data/postgresql" #/data/postgresql
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-volume-claim
+  labels:
+    app: postgres
+spec:
+#  storageClassName: manual
+  accessModes:
+    #- ReadWriteMany
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+# Configure 'Deployment' of postgreSQL server
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  labels:
+    app: postgres
+    tier: database
+spec:
+  selector: # postgresql Pod Should contain same labels
+    matchLabels:
+      app: postgres
+      tier: database
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels: # Must match 'Service' and 'Deployment' selectors
+        app: postgres
+        tier: database
+    spec:
+      containers:
+        - image: 'postgres:16' # image from docker-hub
+          #args:
+          #  - "--ignore-db-dir=lost+found" # Workaround for https://github.com/docker-library/mysql/issues/186
+          name: postgres
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom :
+                secretKeyRef :
+                  name : postgresql-secrets
+                  key :  password
+            - name: POSTGRES_DB # Setting Database Name from a 'ConfigMap'
+              valueFrom :
+                configMapKeyRef :
+                  name : db-config
+                  key :  dbName
+          ports:
+            - containerPort: 5432
+              name: postgres
+          volumeMounts:        # Mounting voulume obtained from Persistent Volume Claim
+            - mountPath: /var/lib/postgresql/data #This is the path in the container on which the mounting will take place.
+              name: postgresdata
+      volumes:
+        - name: postgresdata # Obtaining 'vloume' from PVC
+          persistentVolumeClaim:
+            claimName: postgres-volume-claim
+---
+# Define a 'Service' To Expose postgreSQL to Other Services
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres  # DNS name
+  labels:
+    app: postgres
+    tier: database
+spec:
+  ports:
+    - port: 5432
+      targetPort: 5432
+  selector:       # postgreSQL Pod Should contain same labels
+    app: postgres
+    tier: database
+  #clusterIP: None  # We Use DNS, Thus ClusterIP is not relevant
